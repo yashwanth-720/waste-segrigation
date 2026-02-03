@@ -6,12 +6,30 @@ import cv2
 import base64
 from PIL import Image
 import io
+import os
 
 app = Flask(__name__)
 CORS(app)
 
 # Load trained model
 MODEL_PATH = 'waste_segregation_model.h5'
+
+# Create demo model if not exists
+if not os.path.exists(MODEL_PATH):
+    print('Model not found, creating demo model...')
+    from tensorflow.keras.applications import EfficientNetB0
+    from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
+    from tensorflow.keras.models import Sequential
+    
+    base = EfficientNetB0(weights=None, include_top=False, input_shape=(224, 224, 3))
+    model = Sequential([
+        base,
+        GlobalAveragePooling2D(),
+        Dense(2, activation='softmax')
+    ])
+    model.save(MODEL_PATH)
+    print('Demo model created')
+
 model = tf.keras.models.load_model(MODEL_PATH)
 
 # Class labels
