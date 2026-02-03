@@ -11,47 +11,82 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Load trained model
-MODEL_PATH = 'waste_segregation_model.h5'
+# Use pre-trained MobileNetV2 for feature extraction
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 
-# Create demo model if not exists
-if not os.path.exists(MODEL_PATH):
-    print('Model not found, creating demo model...')
-    from tensorflow.keras.applications import EfficientNetB0
-    from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
-    from tensorflow.keras.models import Sequential
-    
-    base = EfficientNetB0(weights=None, include_top=False, input_shape=(224, 224, 3))
-    model = Sequential([
-        base,
-        GlobalAveragePooling2D(),
-        Dense(7, activation='softmax')
-    ])
-    model.save(MODEL_PATH)
-    print('Demo model created')
-
-model = tf.keras.models.load_model(MODEL_PATH)
+base_model = MobileNetV2(weights='imagenet', include_top=True)
 
 # Class labels
 CLASS_LABELS = ['Biomedical', 'Glass', 'Hazardous', 'Metal', 'Organic', 'Plastic', 'Recyclable']
 IMG_SIZE = (224, 224)
 
+# ImageNet class to waste category mapping
+IMAGENET_TO_WASTE = {
+    'bottle': 'Plastic', 'water_bottle': 'Plastic', 'pop_bottle': 'Plastic', 'pill_bottle': 'Plastic',
+    'can': 'Metal', 'beer_bottle': 'Glass', 'wine_bottle': 'Glass',
+    'plastic_bag': 'Plastic', 'shopping_basket': 'Plastic',
+    'banana': 'Organic', 'orange': 'Organic', 'lemon': 'Organic', 'apple': 'Organic',
+    'broccoli': 'Organic', 'mushroom': 'Organic', 'bell_pepper': 'Organic',
+    'cardboard': 'Recyclable', 'carton': 'Recyclable', 'envelope': 'Recyclable',
+    'syringe': 'Biomedical', 'stethoscope': 'Biomedical', 'mask': 'Biomedical',
+    'battery': 'Hazardous', 'lighter': 'Hazardous', 'spray': 'Hazardous',
+    'tin_can': 'Metal', 'soup_bowl': 'Glass', 'cup': 'Glass', 'coffee_mug': 'Glass',
+    'paper_towel': 'Recyclable', 'tissue': 'Recyclable', 'toilet_tissue': 'Recyclable'
+}
+
 def preprocess_image(image):
     """Preprocess image for model prediction"""
     img = image.resize(IMG_SIZE)
-    img_array = np.array(img) / 255.0
+    img_array = np.array(img)
     img_array = np.expand_dims(img_array, axis=0)
+    img_array = preprocess_input(img_array)
     return img_array
 
 def predict_waste(image):
-    """Predict waste category with detailed analysis"""
+    """Predict waste category using ImageNet features"""
     processed_img = preprocess_image(image)
-    predictions = model.predict(processed_img)
-    class_idx = np.argmax(predictions[0])
-    confidence = float(predictions[0][class_idx]) * 100
+    predictions = base_model.predict(processed_img)
+    decoded = decode_predictions(predictions, top=5)[0]
     
-    # Get probabilities for all classes
-    probabilities = {CLASS_LABELS[i]: float(predictions[0][i] * 100) for i in range(len(CLASS_LABELS))}
+    # Map ImageNet predictions to waste categories
+    category_scores = {label: 0.0 for label in CLASS_LABELS}
+    
+    for _, class_name, score in decoded:
+        class_lower = class_name.lower().replace('_', ' ')
+        
+        # Check direct mapping
+        for key, waste_type in IMAGENET_TO_WASTE.items():
+            if key in class_lower:
+                category_scores[waste_type] += float(score) * 100
+                break
+        else:
+            # Heuristic classification
+            if any(word in class_lower for word in ['bottle', 'container', 'bag', 'wrapper']):
+                category_scores['Plastic'] += float(score) * 50
+            elif any(word in class_lower for word in ['can', 'screw', 'nail', 'wire']):
+                category_scores['Metal'] += float(score) * 50
+            elif any(word in class_lower for word in ['fruit', 'vegetable', 'food', 'plant']):
+                category_scores['Organic'] += float(score) * 50
+            elif any(word in class_lower for word in ['glass', 'jar', 'vase']):
+                category_scores['Glass'] += float(score) * 50
+            elif any(word in class_lower for word in ['paper', 'cardboard', 'book']):
+                category_scores['Recyclable'] += float(score) * 50
+            elif any(word in class_lower for word in ['syringe', 'medical', 'pill']):
+                category_scores['Biomedical'] += float(score) * 50
+            elif any(word in class_lower for word in ['battery', 'chemical', 'toxic']):
+                category_scores['Hazardous'] += float(score) * 50
+    
+    # Normalize scores
+    total = sum(category_scores.values())
+    if total > 0:
+        probabilities = {k: v for k, v in category_scores.items()}
+    else:
+        # Default distribution if no match
+        probabilities = {label: 100/7 for label in CLASS_LABELS}
+    
+    category = max(probabilities, key=probabilities.get)
+    confidence = probabilities[category]
     
     # Detailed waste info
     waste_details = {
@@ -113,7 +148,6 @@ def predict_waste(image):
         }
     }
     
-    category = CLASS_LABELS[class_idx]
     return category, confidence, probabilities, waste_details.get(category, waste_details['Recyclable'])
 
 @app.route('/')
