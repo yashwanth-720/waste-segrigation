@@ -25,7 +25,7 @@ if not os.path.exists(MODEL_PATH):
     model = Sequential([
         base,
         GlobalAveragePooling2D(),
-        Dense(2, activation='softmax')
+        Dense(7, activation='softmax')
     ])
     model.save(MODEL_PATH)
     print('Demo model created')
@@ -33,7 +33,7 @@ if not os.path.exists(MODEL_PATH):
 model = tf.keras.models.load_model(MODEL_PATH)
 
 # Class labels
-CLASS_LABELS = ['Organic', 'Recyclable']
+CLASS_LABELS = ['Biomedical', 'Glass', 'Hazardous', 'Metal', 'Organic', 'Plastic', 'Recyclable']
 IMG_SIZE = (224, 224)
 
 def preprocess_image(image):
@@ -60,19 +60,61 @@ def predict_waste(image):
             'decomposition': 'Biodegradable (2-6 months)',
             'environmental_impact': 'Low - Can be composted into nutrient-rich soil',
             'examples': ['Food scraps', 'Garden waste', 'Paper products', 'Wood'],
-            'tips': 'Separate from other waste to enable composting'
+            'tips': 'Separate from other waste to enable composting',
+            'color': '#4CAF50'
         },
         'Recyclable': {
             'disposal': 'Recycling bin (blue/green bin)',
             'decomposition': 'Non-biodegradable (100-1000 years)',
             'environmental_impact': 'Medium - Can be recycled to reduce resource consumption',
-            'examples': ['Plastic bottles', 'Metal cans', 'Glass', 'Cardboard', 'Paper'],
-            'tips': 'Clean and dry before recycling for better processing'
+            'examples': ['Cardboard', 'Paper', 'Aluminum foil', 'Tetra packs'],
+            'tips': 'Clean and dry before recycling for better processing',
+            'color': '#2196F3'
+        },
+        'Plastic': {
+            'disposal': 'Plastic recycling bin (check recycling codes)',
+            'decomposition': 'Non-biodegradable (450-1000 years)',
+            'environmental_impact': 'High - Major ocean pollutant, recycle or reduce usage',
+            'examples': ['Bottles', 'Bags', 'Containers', 'Packaging', 'Straws'],
+            'tips': 'Check recycling codes (1-7), avoid single-use plastics',
+            'color': '#FF9800'
+        },
+        'Metal': {
+            'disposal': 'Metal recycling bin or scrap collection',
+            'decomposition': 'Non-biodegradable (50-500 years)',
+            'environmental_impact': 'Medium - Highly recyclable, saves mining resources',
+            'examples': ['Cans', 'Foil', 'Wire', 'Appliances', 'Tools'],
+            'tips': 'Rinse containers, separate ferrous and non-ferrous metals',
+            'color': '#9E9E9E'
+        },
+        'Glass': {
+            'disposal': 'Glass recycling bin (separate by color)',
+            'decomposition': 'Non-biodegradable (1 million years)',
+            'environmental_impact': 'Low - 100% recyclable without quality loss',
+            'examples': ['Bottles', 'Jars', 'Windows', 'Mirrors', 'Glassware'],
+            'tips': 'Remove caps/lids, separate by color (clear, green, brown)',
+            'color': '#00BCD4'
+        },
+        'Hazardous': {
+            'disposal': 'Special hazardous waste facility (DO NOT mix with regular waste)',
+            'decomposition': 'Toxic - Never decomposes safely',
+            'environmental_impact': 'CRITICAL - Extremely dangerous to environment and health',
+            'examples': ['Batteries', 'Chemicals', 'Paint', 'Electronics', 'Pesticides'],
+            'tips': 'NEVER throw in regular bins! Contact local hazardous waste facility',
+            'color': '#F44336'
+        },
+        'Biomedical': {
+            'disposal': 'Yellow biomedical waste bag - Hospital/clinic disposal only',
+            'decomposition': 'Infectious - Requires incineration',
+            'environmental_impact': 'CRITICAL - Biohazard risk, requires specialized treatment',
+            'examples': ['Syringes', 'Bandages', 'Medical gloves', 'Surgical waste', 'Expired medicines'],
+            'tips': 'BIOHAZARD! Use yellow bags, contact healthcare waste management',
+            'color': '#FFEB3B'
         }
     }
     
     category = CLASS_LABELS[class_idx]
-    return category, confidence, probabilities, waste_details[category]
+    return category, confidence, probabilities, waste_details.get(category, waste_details['Recyclable'])
 
 @app.route('/')
 def index():
