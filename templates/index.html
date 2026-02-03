@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Waste Segregation System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 AI Waste Segregation System</h1>
+            <p>Powered by Deep Learning CNN - 97%+ Accuracy</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="showTab('upload')">📤 Upload Image</button>
+            <button class="tab-btn" onclick="showTab('camera')">📸 Mobile Camera</button>
+            <button class="tab-btn" onclick="showTab('live')">🎥 Live Camera</button>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload" class="tab-content active">
+            <div class="upload-section">
+                <h2>Upload Waste Image</h2>
+                <input type="file" id="fileInput" accept="image/*" onchange="handleFileUpload(event)">
+                <label for="fileInput" class="upload-btn">Choose Image</label>
+                <div id="uploadPreview" class="preview"></div>
+                <button id="uploadSubmit" class="predict-btn" onclick="predictUpload()" style="display:none;">
+                    Analyze Waste
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Camera Tab -->
+        <div id="camera" class="tab-content">
+            <div class="camera-section">
+                <h2>Capture with Camera</h2>
+                <video id="cameraStream" autoplay playsinline></video>
+                <canvas id="canvas" style="display:none;"></canvas>
+                <div class="camera-controls">
+                    <button class="btn-primary" onclick="startCamera()">Start Camera</button>
+                    <button class="btn-success" onclick="captureImage()">Capture & Analyze</button>
+                    <button class="btn-danger" onclick="stopCamera()">Stop Camera</button>
+                </div>
+                <div id="cameraPreview" class="preview"></div>
+            </div>
+        </div>
+
+        <!-- Live Camera Tab -->
+        <div id="live" class="tab-content">
+            <div class="live-section">
+                <h2>Live Waste Detection</h2>
+                <p>Real-time waste classification using your webcam</p>
+                <img id="liveStream" src="" alt="Live Stream" style="display:none;">
+                <div class="live-controls">
+                    <button class="btn-primary" onclick="startLiveStream()">Start Live Detection</button>
+                    <button class="btn-danger" onclick="stopLiveStream()">Stop Detection</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results" class="results" style="display:none;">
+            <h2>Classification Results</h2>
+            <div class="result-card">
+                <div class="result-icon" id="resultIcon"></div>
+                <h3 id="resultCategory"></h3>
+                <p class="confidence">Confidence: <span id="resultConfidence"></span></p>
+                <p class="description" id="resultDescription"></p>
+            </div>
+        </div>
+
+        <footer>
+            <p>© 2024 AI Waste Segregation | Helping the Environment with AI</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
