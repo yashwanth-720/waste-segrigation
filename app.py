@@ -22,31 +22,13 @@ base_model = MobileNetV2(weights='imagenet', include_top=True)
 CLASS_LABELS = ['Biomedical', 'E-Waste', 'Glass', 'Hazardous', 'Metal', 'Organic', 'Paper', 'Plastic']
 IMG_SIZE = (224, 224)
 
-# Analytics storage (in-memory for demo, use database in production)
 analytics_data = {
     'total_predictions': 0,
     'category_counts': defaultdict(int),
     'predictions_history': []
 }
 
-IMAGENET_TO_WASTE = {
-    'bottle': 'Plastic', 'water_bottle': 'Plastic', 'pop_bottle': 'Plastic', 'pill_bottle': 'Plastic',
-    'can': 'Metal', 'beer_bottle': 'Glass', 'wine_bottle': 'Glass', 'jar': 'Glass',
-    'plastic_bag': 'Plastic', 'shopping_basket': 'Plastic', 'tray': 'Plastic',
-    'banana': 'Organic', 'orange': 'Organic', 'lemon': 'Organic', 'apple': 'Organic', 'strawberry': 'Organic',
-    'broccoli': 'Organic', 'mushroom': 'Organic', 'bell_pepper': 'Organic', 'cucumber': 'Organic',
-    'cardboard': 'Paper', 'carton': 'Paper', 'envelope': 'Paper', 'notebook': 'Paper', 'book': 'Paper',
-    'syringe': 'Biomedical', 'stethoscope': 'Biomedical', 'mask': 'Biomedical', 'bandage': 'Biomedical',
-    'battery': 'Hazardous', 'lighter': 'Hazardous', 'spray': 'Hazardous', 'aerosol': 'Hazardous',
-    'tin_can': 'Metal', 'soup_bowl': 'Glass', 'cup': 'Glass', 'coffee_mug': 'Glass', 'goblet': 'Glass',
-    'paper_towel': 'Paper', 'tissue': 'Paper', 'toilet_tissue': 'Paper',
-    'cellular_telephone': 'E-Waste', 'laptop': 'E-Waste', 'computer': 'E-Waste', 'monitor': 'E-Waste',
-    'mouse': 'E-Waste', 'keyboard': 'E-Waste', 'remote_control': 'E-Waste', 'ipod': 'E-Waste',
-    'hard_disc': 'E-Waste', 'cd_player': 'E-Waste', 'television': 'E-Waste', 'printer': 'E-Waste'
-}
-
 def track_prediction(category, confidence):
-    """Track prediction for analytics"""
     analytics_data['total_predictions'] += 1
     analytics_data['category_counts'][category] += 1
     analytics_data['predictions_history'].append({
@@ -54,7 +36,6 @@ def track_prediction(category, confidence):
         'confidence': confidence,
         'timestamp': datetime.now().isoformat()
     })
-    # Keep only last 100 predictions
     if len(analytics_data['predictions_history']) > 100:
         analytics_data['predictions_history'].pop(0)
 
@@ -67,44 +48,57 @@ def preprocess_image(image):
 
 def predict_waste(image):
     processed_img = preprocess_image(image)
-    predictions = base_model.predict(processed_img)
+    predictions = base_model.predict(processed_img, verbose=0)
     decoded = decode_predictions(predictions, top=10)[0]
+    
+    print(f"Top 10 ImageNet predictions: {[(name, score) for _, name, score in decoded]}")
     
     category_scores = {label: 0.0 for label in CLASS_LABELS}
     
     for _, class_name, score in decoded:
-        class_lower = class_name.lower().replace('_', ' ')
+        class_lower = class_name.lower()
+        score_val = float(score) * 100
         
-        for key, waste_type in IMAGENET_TO_WASTE.items():
-            if key in class_lower:
-                category_scores[waste_type] += float(score) * 100
-                break
-        else:
-            if any(word in class_lower for word in ['bottle', 'container', 'bag', 'wrapper', 'cup', 'straw']):
-                category_scores['Plastic'] += float(score) * 40
-            elif any(word in class_lower for word in ['can', 'screw', 'nail', 'wire', 'chain', 'hook']):
-                category_scores['Metal'] += float(score) * 40
-            elif any(word in class_lower for word in ['fruit', 'vegetable', 'food', 'plant', 'leaf']):
-                category_scores['Organic'] += float(score) * 40
-            elif any(word in class_lower for word in ['glass', 'jar', 'vase', 'goblet', 'wine']):
-                category_scores['Glass'] += float(score) * 40
-            elif any(word in class_lower for word in ['paper', 'cardboard', 'book', 'notebook', 'envelope']):
-                category_scores['Paper'] += float(score) * 40
-            elif any(word in class_lower for word in ['phone', 'laptop', 'computer', 'monitor', 'keyboard', 'mouse', 'electronic', 'circuit', 'chip']):
-                category_scores['E-Waste'] += float(score) * 40
-            elif any(word in class_lower for word in ['syringe', 'medical', 'pill', 'medicine', 'bandage', 'mask']):
-                category_scores['Biomedical'] += float(score) * 40
-            elif any(word in class_lower for word in ['battery', 'chemical', 'toxic', 'spray', 'aerosol']):
-                category_scores['Hazardous'] += float(score) * 40
+        # Direct keyword matching with higher weights
+        if any(k in class_lower for k in ['bottle', 'pop', 'water_bottle', 'beer_bottle', 'wine_bottle']):
+            if 'beer' in class_lower or 'wine' in class_lower:
+                category_scores['Glass'] += score_val * 1.5
+            else:
+                category_scores['Plastic'] += score_val * 1.5
+        elif any(k in class_lower for k in ['can', 'tin', 'soup_bowl']):
+            category_scores['Metal'] += score_val * 1.5
+        elif any(k in class_lower for k in ['banana', 'orange', 'lemon', 'apple', 'strawberry', 'broccoli', 'mushroom', 'cucumber', 'fruit', 'vegetable']):
+            category_scores['Organic'] += score_val * 1.5
+        elif any(k in class_lower for k in ['cardboard', 'carton', 'envelope', 'notebook', 'book', 'paper']):
+            category_scores['Paper'] += score_val * 1.5
+        elif any(k in class_lower for k in ['jar', 'goblet', 'cup', 'glass', 'vase']):
+            category_scores['Glass'] += score_val * 1.5
+        elif any(k in class_lower for k in ['cellular', 'laptop', 'computer', 'monitor', 'keyboard', 'mouse', 'remote', 'ipod', 'television', 'printer']):
+            category_scores['E-Waste'] += score_val * 1.5
+        elif any(k in class_lower for k in ['syringe', 'stethoscope', 'mask', 'bandage']):
+            category_scores['Biomedical'] += score_val * 1.5
+        elif any(k in class_lower for k in ['battery', 'lighter', 'spray', 'aerosol']):
+            category_scores['Hazardous'] += score_val * 1.5
+        elif any(k in class_lower for k in ['bag', 'container', 'wrapper', 'tray']):
+            category_scores['Plastic'] += score_val * 0.8
+        elif any(k in class_lower for k in ['food', 'plant', 'leaf']):
+            category_scores['Organic'] += score_val * 0.8
+        elif any(k in class_lower for k in ['metal', 'steel', 'iron']):
+            category_scores['Metal'] += score_val * 0.8
+    
+    # Add minimum baseline to prevent all zeros
+    for label in CLASS_LABELS:
+        if category_scores[label] == 0:
+            category_scores[label] = 1.0
     
     total = sum(category_scores.values())
-    if total > 0:
-        probabilities = {k: v for k, v in category_scores.items()}
-    else:
-        probabilities = {label: 100/8 for label in CLASS_LABELS}
+    probabilities = {k: (v/total)*100 for k, v in category_scores.items()}
     
     category = max(probabilities, key=probabilities.get)
     confidence = probabilities[category]
+    
+    print(f"Final scores: {probabilities}")
+    print(f"Predicted: {category} ({confidence:.2f}%)")
     
     waste_details = {
         'Organic': {
@@ -199,6 +193,7 @@ def predict():
             'success': True
         })
     except Exception as e:
+        print(f"Error in predict: {str(e)}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 @app.route('/predict_base64', methods=['POST'])
@@ -220,11 +215,11 @@ def predict_base64():
             'success': True
         })
     except Exception as e:
+        print(f"Error in predict_base64: {str(e)}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 @app.route('/analytics')
 def get_analytics():
-    """Get analytics data"""
     return jsonify({
         'total_predictions': analytics_data['total_predictions'],
         'category_counts': dict(analytics_data['category_counts']),
