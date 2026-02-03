@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, session
 from flask_cors import CORS
 import tensorflow as tf
 import numpy as np
@@ -7,36 +7,58 @@ import base64
 from PIL import Image
 import io
 import os
+from datetime import datetime
+from collections import defaultdict
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'waste-ai-secret-key-2024')
 CORS(app)
 
-# Use pre-trained MobileNetV2 for feature extraction
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 
 base_model = MobileNetV2(weights='imagenet', include_top=True)
 
-# Class labels
-CLASS_LABELS = ['Biomedical', 'Glass', 'Hazardous', 'Metal', 'Organic', 'Plastic', 'Recyclable']
+CLASS_LABELS = ['Biomedical', 'E-Waste', 'Glass', 'Hazardous', 'Metal', 'Organic', 'Paper', 'Plastic']
 IMG_SIZE = (224, 224)
 
-# ImageNet class to waste category mapping
-IMAGENET_TO_WASTE = {
-    'bottle': 'Plastic', 'water_bottle': 'Plastic', 'pop_bottle': 'Plastic', 'pill_bottle': 'Plastic',
-    'can': 'Metal', 'beer_bottle': 'Glass', 'wine_bottle': 'Glass',
-    'plastic_bag': 'Plastic', 'shopping_basket': 'Plastic',
-    'banana': 'Organic', 'orange': 'Organic', 'lemon': 'Organic', 'apple': 'Organic',
-    'broccoli': 'Organic', 'mushroom': 'Organic', 'bell_pepper': 'Organic',
-    'cardboard': 'Recyclable', 'carton': 'Recyclable', 'envelope': 'Recyclable',
-    'syringe': 'Biomedical', 'stethoscope': 'Biomedical', 'mask': 'Biomedical',
-    'battery': 'Hazardous', 'lighter': 'Hazardous', 'spray': 'Hazardous',
-    'tin_can': 'Metal', 'soup_bowl': 'Glass', 'cup': 'Glass', 'coffee_mug': 'Glass',
-    'paper_towel': 'Recyclable', 'tissue': 'Recyclable', 'toilet_tissue': 'Recyclable'
+# Analytics storage (in-memory for demo, use database in production)
+analytics_data = {
+    'total_predictions': 0,
+    'category_counts': defaultdict(int),
+    'predictions_history': []
 }
 
+IMAGENET_TO_WASTE = {
+    'bottle': 'Plastic', 'water_bottle': 'Plastic', 'pop_bottle': 'Plastic', 'pill_bottle': 'Plastic',
+    'can': 'Metal', 'beer_bottle': 'Glass', 'wine_bottle': 'Glass', 'jar': 'Glass',
+    'plastic_bag': 'Plastic', 'shopping_basket': 'Plastic', 'tray': 'Plastic',
+    'banana': 'Organic', 'orange': 'Organic', 'lemon': 'Organic', 'apple': 'Organic', 'strawberry': 'Organic',
+    'broccoli': 'Organic', 'mushroom': 'Organic', 'bell_pepper': 'Organic', 'cucumber': 'Organic',
+    'cardboard': 'Paper', 'carton': 'Paper', 'envelope': 'Paper', 'notebook': 'Paper', 'book': 'Paper',
+    'syringe': 'Biomedical', 'stethoscope': 'Biomedical', 'mask': 'Biomedical', 'bandage': 'Biomedical',
+    'battery': 'Hazardous', 'lighter': 'Hazardous', 'spray': 'Hazardous', 'aerosol': 'Hazardous',
+    'tin_can': 'Metal', 'soup_bowl': 'Glass', 'cup': 'Glass', 'coffee_mug': 'Glass', 'goblet': 'Glass',
+    'paper_towel': 'Paper', 'tissue': 'Paper', 'toilet_tissue': 'Paper',
+    'cellular_telephone': 'E-Waste', 'laptop': 'E-Waste', 'computer': 'E-Waste', 'monitor': 'E-Waste',
+    'mouse': 'E-Waste', 'keyboard': 'E-Waste', 'remote_control': 'E-Waste', 'ipod': 'E-Waste',
+    'hard_disc': 'E-Waste', 'cd_player': 'E-Waste', 'television': 'E-Waste', 'printer': 'E-Waste'
+}
+
+def track_prediction(category, confidence):
+    """Track prediction for analytics"""
+    analytics_data['total_predictions'] += 1
+    analytics_data['category_counts'][category] += 1
+    analytics_data['predictions_history'].append({
+        'category': category,
+        'confidence': confidence,
+        'timestamp': datetime.now().isoformat()
+    })
+    # Keep only last 100 predictions
+    if len(analytics_data['predictions_history']) > 100:
+        analytics_data['predictions_history'].pop(0)
+
 def preprocess_image(image):
-    """Preprocess image for model prediction"""
     img = image.resize(IMG_SIZE)
     img_array = np.array(img)
     img_array = np.expand_dims(img_array, axis=0)
@@ -44,81 +66,76 @@ def preprocess_image(image):
     return img_array
 
 def predict_waste(image):
-    """Predict waste category using ImageNet features"""
     processed_img = preprocess_image(image)
     predictions = base_model.predict(processed_img)
-    decoded = decode_predictions(predictions, top=5)[0]
+    decoded = decode_predictions(predictions, top=10)[0]
     
-    # Map ImageNet predictions to waste categories
     category_scores = {label: 0.0 for label in CLASS_LABELS}
     
     for _, class_name, score in decoded:
         class_lower = class_name.lower().replace('_', ' ')
         
-        # Check direct mapping
         for key, waste_type in IMAGENET_TO_WASTE.items():
             if key in class_lower:
                 category_scores[waste_type] += float(score) * 100
                 break
         else:
-            # Heuristic classification
-            if any(word in class_lower for word in ['bottle', 'container', 'bag', 'wrapper']):
-                category_scores['Plastic'] += float(score) * 50
-            elif any(word in class_lower for word in ['can', 'screw', 'nail', 'wire']):
-                category_scores['Metal'] += float(score) * 50
-            elif any(word in class_lower for word in ['fruit', 'vegetable', 'food', 'plant']):
-                category_scores['Organic'] += float(score) * 50
-            elif any(word in class_lower for word in ['glass', 'jar', 'vase']):
-                category_scores['Glass'] += float(score) * 50
-            elif any(word in class_lower for word in ['paper', 'cardboard', 'book']):
-                category_scores['Recyclable'] += float(score) * 50
-            elif any(word in class_lower for word in ['syringe', 'medical', 'pill']):
-                category_scores['Biomedical'] += float(score) * 50
-            elif any(word in class_lower for word in ['battery', 'chemical', 'toxic']):
-                category_scores['Hazardous'] += float(score) * 50
+            if any(word in class_lower for word in ['bottle', 'container', 'bag', 'wrapper', 'cup', 'straw']):
+                category_scores['Plastic'] += float(score) * 40
+            elif any(word in class_lower for word in ['can', 'screw', 'nail', 'wire', 'chain', 'hook']):
+                category_scores['Metal'] += float(score) * 40
+            elif any(word in class_lower for word in ['fruit', 'vegetable', 'food', 'plant', 'leaf']):
+                category_scores['Organic'] += float(score) * 40
+            elif any(word in class_lower for word in ['glass', 'jar', 'vase', 'goblet', 'wine']):
+                category_scores['Glass'] += float(score) * 40
+            elif any(word in class_lower for word in ['paper', 'cardboard', 'book', 'notebook', 'envelope']):
+                category_scores['Paper'] += float(score) * 40
+            elif any(word in class_lower for word in ['phone', 'laptop', 'computer', 'monitor', 'keyboard', 'mouse', 'electronic', 'circuit', 'chip']):
+                category_scores['E-Waste'] += float(score) * 40
+            elif any(word in class_lower for word in ['syringe', 'medical', 'pill', 'medicine', 'bandage', 'mask']):
+                category_scores['Biomedical'] += float(score) * 40
+            elif any(word in class_lower for word in ['battery', 'chemical', 'toxic', 'spray', 'aerosol']):
+                category_scores['Hazardous'] += float(score) * 40
     
-    # Normalize scores
     total = sum(category_scores.values())
     if total > 0:
         probabilities = {k: v for k, v in category_scores.items()}
     else:
-        # Default distribution if no match
-        probabilities = {label: 100/7 for label in CLASS_LABELS}
+        probabilities = {label: 100/8 for label in CLASS_LABELS}
     
     category = max(probabilities, key=probabilities.get)
     confidence = probabilities[category]
     
-    # Detailed waste info
     waste_details = {
         'Organic': {
             'disposal': 'Compost bin or organic waste collection',
             'decomposition': 'Biodegradable (2-6 months)',
             'environmental_impact': 'Low - Can be composted into nutrient-rich soil',
-            'examples': ['Food scraps', 'Garden waste', 'Paper products', 'Wood'],
+            'examples': ['Food scraps', 'Garden waste', 'Fruits', 'Vegetables', 'Wood'],
             'tips': 'Separate from other waste to enable composting',
             'color': '#4CAF50'
         },
-        'Recyclable': {
-            'disposal': 'Recycling bin (blue/green bin)',
-            'decomposition': 'Non-biodegradable (100-1000 years)',
-            'environmental_impact': 'Medium - Can be recycled to reduce resource consumption',
-            'examples': ['Cardboard', 'Paper', 'Aluminum foil', 'Tetra packs'],
-            'tips': 'Clean and dry before recycling for better processing',
+        'Paper': {
+            'disposal': 'Paper recycling bin (blue bin)',
+            'decomposition': 'Biodegradable (2-6 weeks)',
+            'environmental_impact': 'Low - Highly recyclable, saves trees',
+            'examples': ['Newspapers', 'Cardboard', 'Books', 'Magazines', 'Office paper'],
+            'tips': 'Keep dry and clean, remove plastic windows from envelopes',
             'color': '#2196F3'
         },
         'Plastic': {
-            'disposal': 'Plastic recycling bin (check recycling codes)',
+            'disposal': 'Plastic recycling bin (check recycling codes 1-7)',
             'decomposition': 'Non-biodegradable (450-1000 years)',
             'environmental_impact': 'High - Major ocean pollutant, recycle or reduce usage',
-            'examples': ['Bottles', 'Bags', 'Containers', 'Packaging', 'Straws'],
-            'tips': 'Check recycling codes (1-7), avoid single-use plastics',
+            'examples': ['Bottles', 'Bags', 'Containers', 'Packaging', 'Straws', 'Cups'],
+            'tips': 'Check recycling codes, rinse before recycling, avoid single-use',
             'color': '#FF9800'
         },
         'Metal': {
             'disposal': 'Metal recycling bin or scrap collection',
             'decomposition': 'Non-biodegradable (50-500 years)',
             'environmental_impact': 'Medium - Highly recyclable, saves mining resources',
-            'examples': ['Cans', 'Foil', 'Wire', 'Appliances', 'Tools'],
+            'examples': ['Cans', 'Foil', 'Wire', 'Appliances', 'Tools', 'Nails'],
             'tips': 'Rinse containers, separate ferrous and non-ferrous metals',
             'color': '#9E9E9E'
         },
@@ -130,11 +147,19 @@ def predict_waste(image):
             'tips': 'Remove caps/lids, separate by color (clear, green, brown)',
             'color': '#00BCD4'
         },
+        'E-Waste': {
+            'disposal': 'E-waste collection center or authorized recycler',
+            'decomposition': 'Non-biodegradable (contains toxic materials)',
+            'environmental_impact': 'CRITICAL - Contains heavy metals, must be recycled properly',
+            'examples': ['Phones', 'Laptops', 'TVs', 'Batteries', 'Chargers', 'Keyboards'],
+            'tips': 'NEVER throw in regular bins! Take to e-waste recycling centers',
+            'color': '#9C27B0'
+        },
         'Hazardous': {
             'disposal': 'Special hazardous waste facility (DO NOT mix with regular waste)',
             'decomposition': 'Toxic - Never decomposes safely',
             'environmental_impact': 'CRITICAL - Extremely dangerous to environment and health',
-            'examples': ['Batteries', 'Chemicals', 'Paint', 'Electronics', 'Pesticides'],
+            'examples': ['Chemicals', 'Paint', 'Pesticides', 'Motor oil', 'Cleaning agents'],
             'tips': 'NEVER throw in regular bins! Contact local hazardous waste facility',
             'color': '#F44336'
         },
@@ -148,16 +173,14 @@ def predict_waste(image):
         }
     }
     
-    return category, confidence, probabilities, waste_details.get(category, waste_details['Recyclable'])
+    return category, confidence, probabilities, waste_details.get(category, waste_details['Paper'])
 
 @app.route('/')
 def index():
-    """Serve main page"""
     return render_template('index.html')
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """Handle image upload and prediction"""
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file uploaded'}), 400
@@ -166,6 +189,7 @@ def predict():
         image = Image.open(file.stream).convert('RGB')
         
         category, confidence, probabilities, details = predict_waste(image)
+        track_prediction(category, confidence)
         
         return jsonify({
             'category': category,
@@ -179,7 +203,6 @@ def predict():
 
 @app.route('/predict_base64', methods=['POST'])
 def predict_base64():
-    """Handle base64 image from camera"""
     try:
         data = request.get_json()
         image_data = data['image'].split(',')[1]
@@ -187,6 +210,7 @@ def predict_base64():
         image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         
         category, confidence, probabilities, details = predict_waste(image)
+        track_prediction(category, confidence)
         
         return jsonify({
             'category': category,
@@ -198,9 +222,18 @@ def predict_base64():
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
 
+@app.route('/analytics')
+def get_analytics():
+    """Get analytics data"""
+    return jsonify({
+        'total_predictions': analytics_data['total_predictions'],
+        'category_counts': dict(analytics_data['category_counts']),
+        'recent_predictions': analytics_data['predictions_history'][-10:],
+        'success': True
+    })
+
 @app.route('/camera_proxy')
 def camera_proxy():
-    """Proxy for IP camera to avoid CORS issues"""
     import requests as req
     url = request.args.get('url')
     if not url:
