@@ -26,12 +26,35 @@ def preprocess_image(image):
     return img_array
 
 def predict_waste(image):
-    """Predict waste category"""
+    """Predict waste category with detailed analysis"""
     processed_img = preprocess_image(image)
     predictions = model.predict(processed_img)
     class_idx = np.argmax(predictions[0])
     confidence = float(predictions[0][class_idx]) * 100
-    return CLASS_LABELS[class_idx], confidence
+    
+    # Get probabilities for all classes
+    probabilities = {CLASS_LABELS[i]: float(predictions[0][i] * 100) for i in range(len(CLASS_LABELS))}
+    
+    # Detailed waste info
+    waste_details = {
+        'Organic': {
+            'disposal': 'Compost bin or organic waste collection',
+            'decomposition': 'Biodegradable (2-6 months)',
+            'environmental_impact': 'Low - Can be composted into nutrient-rich soil',
+            'examples': ['Food scraps', 'Garden waste', 'Paper products', 'Wood'],
+            'tips': 'Separate from other waste to enable composting'
+        },
+        'Recyclable': {
+            'disposal': 'Recycling bin (blue/green bin)',
+            'decomposition': 'Non-biodegradable (100-1000 years)',
+            'environmental_impact': 'Medium - Can be recycled to reduce resource consumption',
+            'examples': ['Plastic bottles', 'Metal cans', 'Glass', 'Cardboard', 'Paper'],
+            'tips': 'Clean and dry before recycling for better processing'
+        }
+    }
+    
+    category = CLASS_LABELS[class_idx]
+    return category, confidence, probabilities, waste_details[category]
 
 @app.route('/')
 def index():
@@ -48,11 +71,13 @@ def predict():
         file = request.files['file']
         image = Image.open(file.stream).convert('RGB')
         
-        category, confidence = predict_waste(image)
+        category, confidence, probabilities, details = predict_waste(image)
         
         return jsonify({
             'category': category,
             'confidence': f'{confidence:.2f}%',
+            'probabilities': probabilities,
+            'details': details,
             'success': True
         })
     except Exception as e:
@@ -67,60 +92,32 @@ def predict_base64():
         image_bytes = base64.b64decode(image_data)
         image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
         
-        category, confidence = predict_waste(image)
+        category, confidence, probabilities, details = predict_waste(image)
         
         return jsonify({
             'category': category,
             'confidence': f'{confidence:.2f}%',
+            'probabilities': probabilities,
+            'details': details,
             'success': True
         })
     except Exception as e:
         return jsonify({'error': str(e), 'success': False}), 500
 
-# Global variable for video stream
-camera = None
-
-def generate_frames():
-    """Generate frames for live video stream with predictions"""
-    global camera
-    camera = cv2.VideoCapture(0)
-    
-    while True:
-        success, frame = camera.read()
-        if not success:
-            break
-        
-        # Make prediction on frame
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_frame)
-        category, confidence = predict_waste(pil_image)
-        
-        # Draw prediction on frame
-        color = (0, 255, 0) if category == 'Recyclable' else (0, 165, 255)
-        cv2.putText(frame, f'{category}: {confidence:.1f}%', 
-                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3)
-        
-        # Encode frame
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
-        
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-@app.route('/video_feed')
-def video_feed():
-    """Video streaming route"""
-    return Response(generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/stop_camera')
-def stop_camera():
-    """Stop camera stream"""
-    global camera
-    if camera is not None:
-        camera.release()
-        camera = None
-    return jsonify({'success': True})
+@app.route('/camera_proxy')
+def camera_proxy():
+    """Proxy for IP camera to avoid CORS issues"""
+    import requests as req
+    url = request.args.get('url')
+    if not url:
+        return 'No URL provided', 400
+    try:
+        response = req.get(url, stream=True, timeout=5)
+        return Response(response.iter_content(chunk_size=1024), 
+                       content_type=response.headers.get('content-type'))
+    except:
+        return 'Camera connection failed', 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
